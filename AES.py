@@ -127,6 +127,15 @@ KeyExpansion(byte key[4*Nk = 4*8B=256b for AES-256], word w[Nb*(Nr+1) = 4*(14+1)
 
 """
 class AES_256():
+    Key = None
+    w = None
+    Nk = 8
+    Nb = 4
+    Nr = 14
+    def __init__(self, masterkey) -> None:
+        self.Key = masterkey
+        self.w = b'\x00'*240
+        self.w = self.KeyExpansion(self.Key, self.w, self.Nk, self.Nb, self.Nr, verbose=False)
     
     s_box = ( 
         0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76, 
@@ -229,3 +238,134 @@ class AES_256():
         
         w = bytearray(w_list)
         return w
+
+    def SubBytes(self, a):
+        retval = a
+
+        for i in range(len(a)):
+            for j in range(len(a[0])):
+                retval[i][j] = self.s_box[a[i][j]]
+        
+        return retval
+
+    def InvSubBytes(self, a):
+        retval = a
+
+        for i in range(len(a)):
+            for j in range(len(a[0])):
+                retval[i][j] = self.inv_s_box[a[i][j]]
+        
+        return retval
+
+    def ShiftRows(self, a):
+        #0-th shift none
+        #1-st shift 1
+        #2-nd shift 2
+        #3-rd shift 3
+        zeroth = a[0]
+        first = self.RotWord(a[1])
+        second = self.RotWord(self.RotWord(a[2]))
+        third = self.RotWord(self.RotWord(self.RotWord(a[3])))
+        retval = [zeroth, first, second, third]
+        return retval
+
+    def XTime(self, a):
+        retval=(((a << 1) ^ 0x1B) & 0xFF) if (a & 0x80) else (a << 1)
+        return retval
+
+    def MixColumn(self, a):
+        #From https://nvlpubs.nist.gov/nistpubs/fips/nist.fips.197.pdf page 11
+        #t = self.XOR_BITWISE(self.XOR_BITWISE(self.XOR_BITWISE(a[0], a[1]),a[2]),a[3])
+        #u = a[0]
+
+        #a[0] = self.XOR_BITWISE(a[0], self.XOR_BITWISE(t, self.XTime(self.XOR_BITWISE(a[0], a[1]))))
+        #a[1] = self.XOR_BITWISE(a[1], self.XOR_BITWISE(t, self.XTime(self.XOR_BITWISE(a[1], a[2]))))
+        #a[2] = self.XOR_BITWISE(a[2], self.XOR_BITWISE(t, self.XTime(self.XOR_BITWISE(a[2], a[3]))))
+        #a[3] = self.XOR_BITWISE(a[3], self.XOR_BITWISE(t, self.XTime(self.XOR_BITWISE(a[3], u))))
+        t = a[0] ^ a[1] ^ a[2] ^ a[3]
+        u = a[0]
+        a[0] ^= t ^ self.XTime(a[0] ^ a[1])
+        a[1] ^= t ^ self.XTime(a[1] ^ a[2])
+        a[2] ^= t ^ self.XTime(a[2] ^ a[3])
+        a[3] ^= t ^ self.XTime(a[3] ^ u)
+        return a
+
+    def MixColumns(self, a, Nb):
+        for i in range(Nb):
+            intermediate = [row[i] for row in a]
+            res_out = self.MixColumn(intermediate)
+            for j in range(Nb):
+                a[j][i] = res_out[j]
+
+        return a
+        
+    def InvMixColumns(self, a, Nb):
+        for i in range(Nb):
+            u = self.XTime(self.XTime(self.XOR_BITWISE(a[i][0], a[i][2])))
+            v = self.XTime(self.XTime(self.XOR_BITWISE(a[i][1], a[i][3])))
+            a[i][0] = self.XOR_BITWISE(a[i][0], u)
+            a[i][1] = self.XOR_BITWISE(a[i][1], v)
+            a[i][2] = self.XOR_BITWISE(a[i][2], u)
+            a[i][3] = self.XOR_BITWISE(a[i][3], v)
+
+        a = self.MixColumns(a, Nb)
+        return a
+
+    def AddRoundKey(self, a, round_key):
+        retval = bytes(a ^ b for a, b in zip(bytes(self.FromMatrix([bytes(i) for i in a])), bytes(round_key)))
+        retval = self.ToMatrix(list(retval))
+        return retval
+
+    def ToMatrix(self, array):
+        out_mat = [[],[],[],[]]
+        for i in range(len(array)//4):
+            out_mat[0].append(array[i*4])
+            out_mat[1].append(array[i*4+1])
+            out_mat[2].append(array[i*4+2])
+            out_mat[3].append(array[i*4+3])
+        return out_mat
+    
+    def FromMatrix(self, matrix):
+        out_array = []
+        for i in range(len(matrix)):
+            for j in range(len(matrix[0])):
+                out_array.append(matrix[j][i])
+        
+        return out_array
+
+    def Encrypt(self, input):
+        assert(len(input) == 16)
+
+        state = self.ToMatrix(input)
+        print(f'Round 0: input: {bytes(self.FromMatrix([bytes(i) for i in state])).hex()}')
+        print(f'Round 0: k_sch: {bytes(self.w[0:16]).hex()}')
+        state = self.AddRoundKey(state, self.w[0:16])
+        print(f'Round 1: start: {bytes(self.FromMatrix([bytes(i) for i in state])).hex()}')
+        for i in range(1, self.Nr):
+            state = self.SubBytes(state)
+            print(f'Round {i}: s_box: {bytes(self.FromMatrix([bytes(i) for i in state])).hex()}')
+            state = self.ShiftRows(state)
+            print(f'Round {i}: s_row: {bytes(self.FromMatrix([bytes(i) for i in state])).hex()}')
+            state = self.MixColumns(state, self.Nb)
+            print(f'Round {i}: m_col: {bytes(self.FromMatrix([bytes(i) for i in state])).hex()}')
+            print(f'Round {i}: k_sch: {bytes(self.w[i*16:i*16+16]).hex()}')
+            state = self.AddRoundKey(state, self.w[i*16:i*16+16])
+            print(f'Round {i+1}: start: {bytes(self.FromMatrix([bytes(i) for i in state])).hex()}')
+
+        
+        state = self.SubBytes(state)
+        print(f'Round 14: s_box: {bytes(self.FromMatrix([bytes(i) for i in state])).hex()}')
+        state = self.ShiftRows(state)
+        print(f'Round 14: s_row: {bytes(self.FromMatrix([bytes(i) for i in state])).hex()}')
+        state = self.AddRoundKey(state, self.w[-16:])
+        print(f'Round 14: k_sch: {bytes(self.w[-16:]).hex()}')
+        print(f'Round 14: output: {bytes(self.FromMatrix([bytes(i) for i in state])).hex()}')
+
+
+
+        cipher = self.FromMatrix(state)
+
+        return cipher
+
+instance = AES_256(b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f')
+instance.Encrypt(b'\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\xcc\xdd\xee\xff')
