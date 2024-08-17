@@ -3,6 +3,8 @@ Implementation of AES-256 fully in Python. Zero usage of additional libraries, s
 
 ## Current work
  - Implemented Key Expansion. Tested with NIST example for AES-256.
+ - Implemented Encrypt. Tested with NIST example for AES-256.
+ - Implemenrted Decrypt. Tested with NIST example for AES-256 and cyclic Encrypt -> Decrypt with arbitrary data.
 
 ## Future work
 This implementation will be used as a starting point and testbed for an FPGA implementation on the Xilinx PYNQ Z2 board. Leveraging the power of having Python on the board itself, this code will be used to validate the Overlay on the Z2 implementing AES-256 in FPGA fabric.
