@@ -126,6 +126,10 @@ KeyExpansion(byte key[4*Nk = 4*8B=256b for AES-256], word w[Nb*(Nr+1) = 4*(14+1)
     
 
 """
+
+import random
+
+
 class AES_256():
     Key = None
     w = None
@@ -136,6 +140,18 @@ class AES_256():
         self.Key = masterkey
         self.w = b'\x00'*240
         self.w = self.KeyExpansion(self.Key, self.w, self.Nk, self.Nb, self.Nr, verbose=False)
+        self.iv = self.generate_nonce()
+        self.counter = self.iv + b'\x00\x00\x00\x01'
+        self.d_counter = self.counter
+        self.H = self.Encrypt(b'\x00'*16, True)        
+        self.tag = self.GHash(b'\x00'*16, self.H, verbose=False)
+        self.d_tag = self.tag
+
+    def generate_nonce(self):
+        nonce = []
+        #96b, 12B
+        nonce = b'\x00'*12 #random.randbytes(12)
+        return nonce
     
     s_box = ( 
         0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76, 
@@ -206,7 +222,7 @@ class AES_256():
         word[0] = temp
         return word
 
-    def XOR_BITWISE(self, a:bytearray,b:bytearray):
+    def XOR_BITWISE_FOR_KS(self, a:bytearray,b:bytearray):
         assert(len(a) == len(b))
         bytes_a = bytes(a)
         result = [0, 0, 0, 0]
@@ -237,11 +253,11 @@ class AES_256():
             if(verbose):
                 print(f'For i={i}, temp={bytes(temp_list).hex()}')
             if (i % Nk == 0):
-                temp_list =  self.XOR_BITWISE(self.SubWord(self.RotWord(temp_list)),bytes(self.r_con[int(i/Nk)]))
+                temp_list =  self.XOR_BITWISE_FOR_KS(self.SubWord(self.RotWord(temp_list)),bytes(self.r_con[int(i/Nk)]))
             elif (Nk > 6 and i % Nk == 4):
                 temp_list = self.SubWord(temp_list)
             
-            w_list[i*4:i*4+4] = self.XOR_BITWISE(w_list[(i-Nk)*4:(i-Nk)*4+4], temp_list)
+            w_list[i*4:i*4+4] = self.XOR_BITWISE_FOR_KS(w_list[(i-Nk)*4:(i-Nk)*4+4], temp_list)
             i+=1
         
         w = bytearray(w_list)
@@ -410,3 +426,78 @@ class AES_256():
 
         plaintext = self.FromMatrix(state)
         return bytes(plaintext)
+    
+
+    def GaloisFieldMultiply(self, x, y):
+        if type(x) == bytes:
+            x_val = int.from_bytes(x, 'big')
+        else:
+            x_val = x
+        if type(y) == bytes:
+            y_val = int.from_bytes(y, 'big')
+        else:
+            y_val = y
+        
+
+        assert x_val < (1 << 128)
+        assert y_val < (1 << 128)
+
+        result = 0
+        #Go from LSB to MSB
+        for i in range(127, -1, -1):
+            result ^= x_val * ((y_val >> i) & 1)
+            x_val = (x_val >> 1) ^ ((x_val & 1) * 0xE1000000000000000000000000000000)
+        
+        assert result < (1 << 128)
+        return result
+    
+
+    def GHash(self, data_to_authenticate, ciphertext, verbose:bool=False):
+        
+        #First we padd if auth data is < 128b
+        data = None
+        if len(data_to_authenticate) % 16 == 0:
+            data = data_to_authenticate
+        else:
+            data = data_to_authenticate + b'\x00' * (16 - len(data_to_authenticate) % 16)
+        
+        #We also do it for the cipher
+        if len(ciphertext) % 16 == 0:
+            data += ciphertext
+        else:
+            data += ciphertext + b'\x00' * (16 - len(ciphertext) % 16)
+
+        
+        tag = 0
+        for i in range(len(data) // 16):
+            tag ^= int.from_bytes(data[i*16 : (i+1)*16], 'big')
+            tag = self.GaloisFieldMultiply(self.H, tag)
+        
+        tag ^= ((8* len(data_to_authenticate)) << 64) | (8 * len(ciphertext))
+        tag = self.GaloisFieldMultiply(self.H, tag)
+
+        return tag
+
+
+    def EncryptGCM(self, input, verbose:bool=False):
+        assert (int.from_bytes(self.counter,'big') < (1 << 128))
+
+        data_to_auth = self.counter
+        encrypted_counter = self.Encrypt(self.counter, verbose)
+        ciphertext = bytes(a ^ b for a,b in zip(encrypted_counter, input))
+        self.counter = (int.from_bytes(self.counter, 'big') + 1).to_bytes(16, 'big')
+        self.tag = self.GHash(data_to_auth, bytes(a ^ b for a,b in zip(ciphertext, self.tag.to_bytes(16, 'big'))))
+
+        return ciphertext, self.tag
+
+    def DecryptGCM(self, input, verbose:bool=False):
+        assert (int.from_bytes(self.counter,'big') < (1 << 128))
+        data_to_auth = self.d_counter
+        encrypted_d_counter = self.Encrypt(self.d_counter, verbose)
+        plaintext = bytes(a ^ b for a,b in zip(encrypted_d_counter, input))
+        if(verbose):
+            print("Plaintext is: ", plaintext)
+        self.d_counter = (int.from_bytes(self.d_counter, 'big') + 1).to_bytes(16, 'big')
+        self.d_tag = self.GHash(data_to_auth, bytes(a ^ b for a,b in zip(input,self.d_tag.to_bytes(16, 'big'))))
+
+        return plaintext, self.d_tag

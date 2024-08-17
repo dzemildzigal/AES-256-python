@@ -31,8 +31,19 @@ def test_decrypt_cyclic():
     assert(plaintext == b'Hello world!  :)')
     return True
 
+def test_gcm():
+    instance = AES_256(b'ThisIsTheBestPasswordICanThinkOf')
+    ciphertext, tag = instance.EncryptGCM(b'Hello world!  :)', verbose=False)
+    plaintext, d_tag = instance.DecryptGCM(ciphertext, verbose=False)
+    assert(plaintext == b'Hello world!  :)')
+    assert(tag == d_tag)
+    return True
+
+
+
 assert(test_key_expansion())
 assert(test_encrypt())
 assert(test_decrypt())
 assert(test_decrypt_cyclic())
+assert(test_gcm())
 print("All tests passed")
