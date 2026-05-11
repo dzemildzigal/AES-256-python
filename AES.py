@@ -127,7 +127,7 @@ KeyExpansion(byte key[4*Nk = 4*8B=256b for AES-256], word w[Nb*(Nr+1) = 4*(14+1)
 
 """
 
-import random
+import random, copy
 
 
 class AES_256():
@@ -143,7 +143,7 @@ class AES_256():
         self.iv = self.generate_nonce()
         self.counter = self.iv + b'\x00\x00\x00\x01'
         self.d_counter = self.counter
-        self.H = self.Encrypt(b'\x00'*16, True)        
+        self.H = self.Encrypt(b'\x00'*16, verbose=True)        
         self.tag = self.GHash(b'\x00'*16, self.H, verbose=False)
         self.d_tag = self.tag
 
@@ -212,6 +212,7 @@ class AES_256():
         word[1] = word[2]
         word[2] = word[3]
         word[3] = temp
+
         return word
 
     def InvRotWord(self, word:bytearray=b'\x00\x00\x00\x00'):
@@ -258,30 +259,33 @@ class AES_256():
                 temp_list = self.SubWord(temp_list)
             
             w_list[i*4:i*4+4] = self.XOR_BITWISE_FOR_KS(w_list[(i-Nk)*4:(i-Nk)*4+4], temp_list)
+            print(bytes(bytearray(w_list[i*4:i*4+4])).hex())
             i+=1
         
         w = bytearray(w_list)
+        print(bytes(w).hex())
         return w
 
     def SubBytes(self, a):
+        #comp = copy.deepcopy(a)
         retval = a
 
         for i in range(len(a)):
             for j in range(len(a[0])):
                 retval[i][j] = self.s_box[a[i][j]]
-        
         return retval
 
     def InvSubBytes(self, a):
+        #comp = copy.deepcopy(a)
         retval = a
 
         for i in range(len(a)):
             for j in range(len(a[0])):
                 retval[i][j] = self.inv_s_box[a[i][j]]
-        
         return retval
 
     def ShiftRows(self, a):
+        #comp = copy.deepcopy(a)
         #0-th shift none
         #1-st shift 1
         #2-nd shift 2
@@ -294,19 +298,30 @@ class AES_256():
         return retval
 
     def InvShiftRows(self, a):
+        comp = copy.deepcopy(a)
         zeroth = a[0]
         first = self.InvRotWord(a[1])
         second = self.InvRotWord(self.InvRotWord(a[2]))
         third = self.InvRotWord(self.InvRotWord(self.InvRotWord(a[3])))
         retval = [zeroth, first, second, third]
+        
+        input_state = bytes(self.FromMatrix(comp)).hex()
+        output_state = bytes(self.FromMatrix(retval)).hex()
+        #print("input_state = 128\'h" + input_state+";")
+        #print("@(posedge clk);")
+        #print("assert (output_state == 128\'h" + output_state + "&& valid_data==1\'b1);")
         return retval
 
     def XTime(self, a):
+        #print("@(posedge clk);")
+        #print("input_byte = 8\'d" + str(a)+";")
         retval=(((a << 1) ^ 0x1B) & 0xFF) if (a & 0x80) else (a << 1)
+        #print("assert (output_byte == 8\'d" + str(retval) + ");")
         return retval
 
     def MixColumn(self, a):
         #From https://nvlpubs.nist.gov/nistpubs/fips/nist.fips.197.pdf page 11
+        input_state = copy.deepcopy(a)
         t = a[0] ^ a[1] ^ a[2] ^ a[3]
         u = a[0]
         a[0] ^= t ^ self.XTime(a[0] ^ a[1])
@@ -316,12 +331,16 @@ class AES_256():
         return a
 
     def MixColumns(self, a, Nb):
+        input_state = copy.deepcopy(a)
         for i in range(Nb):
             intermediate = [row[i] for row in a]
             res_out = self.MixColumn(intermediate)
             for j in range(Nb):
                 a[j][i] = res_out[j]
-
+        
+        #print("@(posedge clk);")
+        #print("input_state = 128\'h" + bytes(self.FromMatrix([bytes(i) for i in input_state])).hex()+";")
+        #print("assert (output_state == 128\'h" + bytes(self.FromMatrix([bytes(i) for i in a])).hex() + ");")
         return a
         
     def InvMixColumns(self, a, Nb):
@@ -337,8 +356,11 @@ class AES_256():
         return a
 
     def AddRoundKey(self, a, round_key):
+        #comp = copy.deepcopy(a)
+        #comp_rk = copy.deepcopy(round_key)
         retval = bytes(a ^ b for a, b in zip(bytes(self.FromMatrix([bytes(i) for i in a])), bytes(round_key)))
         retval = self.ToMatrix(list(retval))
+        
         return retval
 
     def ToMatrix(self, array):
